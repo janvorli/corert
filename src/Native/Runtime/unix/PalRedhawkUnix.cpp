@@ -142,6 +142,7 @@ static uint8_t g_helperPage[OS_PAGE_SIZE] __attribute__((aligned(OS_PAGE_SIZE)))
 pthread_mutex_t g_flushProcessWriteBuffersMutex;
 
 extern bool PalQueryProcessorTopology();
+extern bool PalQueryProcessorTopology();
 bool InitializeFlushProcessWriteBuffers();
 
 void TimeSpecAdd(timespec* time, uint32_t milliseconds)
@@ -924,11 +925,291 @@ extern "C" UInt32_BOOL HeapFree(HANDLE heap, UInt32 flags, void * mem)
     return UInt32_TRUE;
 }
 
+// TODO: create a separate OSX folder? Or file - PalRedhawkOsx.cpp???
+#ifdef __APPLE__
+
+void GetThreadContextFromThreadState(thread_state_flavor_t threadStateFlavor, thread_state_t threadState, PAL_LIMITED_CONTEXT* context)
+{
+    switch (threadStateFlavor)
+    {
+#ifdef _X86_
+        case x86_THREAD_STATE32:
+            if (context->ContextFlags & (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS))
+            {
+                x86_thread_state32_t *state = (x86_thread_state32_t *)threadState;
+
+                context->Eax = state->eax;
+                context->Ebx = state->ebx;
+                context->Ecx = state->ecx;
+                context->Edx = state->edx;
+                context->Edi = state->edi;
+                context->Esi = state->esi;
+                context->Ebp = state->ebp;
+                context->Esp = state->esp;
+                context->SegSs = state->ss;
+                context->EFlags = state->eflags;
+                context->Eip = state->eip;
+                context->SegCs = state->cs;
+                context->SegDs = state->ds;
+                context->SegEs = state->es;
+                context->SegFs = state->fs;
+                context->SegGs = state->gs;
+            }
+            break;
+
+        case x86_FLOAT_STATE32:
+        {
+            x86_float_state32_t *state = (x86_float_state32_t *)threadState;
+
+            if (context->ContextFlags & CONTEXT_FLOATING_POINT)
+            {
+                context->FloatSave.ControlWord = *(DWORD*)&state->fpu_fcw;
+                context->FloatSave.StatusWord = *(DWORD*)&state->fpu_fsw;
+                context->FloatSave.TagWord = state->fpu_ftw;
+                context->FloatSave.ErrorOffset = state->fpu_ip;
+                context->FloatSave.ErrorSelector = state->fpu_cs;
+                context->FloatSave.DataOffset = state->fpu_dp;
+                context->FloatSave.DataSelector = state->fpu_ds;
+                context->FloatSave.Cr0NpxState = state->fpu_mxcsr;
+
+                // Windows stores the floating point registers in a packed layout (each 10-byte register end to end
+                // for a total of 80 bytes). But Mach returns each register in an 16-bit structure (presumably for
+                // alignment purposes). So we can't just memcpy the registers over in a single block, we need to copy
+                // them individually.
+                for (int i = 0; i < 8; i++)
+                {
+                    memcpy(&context->FloatSave.RegisterArea[i * 10], (&state->fpu_stmm0)[i].mmst_reg, 10);
+                }
+            }
+
+            if (context->ContextFlags & CONTEXT_EXTENDED_REGISTERS)
+            {
+                // The only extended register information that Mach will tell us about are the xmm register values.
+                // Both Windows and Mach store the registers in a packed layout (each of the 8 registers is 16 bytes)
+                // so we can simply memcpy them across.
+                memcpy(context->ExtendedRegisters + CONTEXT_EXREG_XMM_OFFSET, &state->fpu_xmm0, 8 * 16);
+            }
+        }
+        break;
+
+#elif defined(_AMD64_)
+        case x86_THREAD_STATE64:
+            if (context->ContextFlags & (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS))
+            {
+                x86_thread_state64_t *state = (x86_thread_state64_t *)threadState;
+
+                context->Rax = state->__rax;
+                context->Rbx = state->__rbx;
+                context->Rcx = state->__rcx;
+                context->Rdx = state->__rdx;
+                context->Rdi = state->__rdi;
+                context->Rsi = state->__rsi;
+                context->Rbp = state->__rbp;
+                context->Rsp = state->__rsp;
+                context->R8 = state->__r8;
+                context->R9 = state->__r9;
+                context->R10 = state->__r10;
+                context->R11 = state->__r11;
+                context->R12 = state->__r12;
+                context->R13 = state->__r13;
+                context->R14 = state->__r14;
+                context->R15 = state->__r15;
+                context->EFlags = state->__rflags;
+                context->Rip = state->__rip;
+                context->SegCs = state->__cs;
+                // We cannot get the SS, DS and ES registers, so zero them out
+                context->SegSs = 0;
+                context->SegDs = 0;
+                context->SegEs = 0;
+                context->SegFs = state->__fs;
+                context->SegGs = state->__gs;
+            }
+            break;
+
+        case x86_FLOAT_STATE64:
+            if (context->ContextFlags & CONTEXT_FLOATING_POINT)
+            {
+                x86_float_state64_t *state = (x86_float_state64_t *)threadState;
+
+                context->FltSave.ControlWord = *(DWORD*)&state->__fpu_fcw;
+                context->FltSave.StatusWord = *(DWORD*)&state->__fpu_fsw;
+                context->FltSave.TagWord = state->__fpu_ftw;
+                context->FltSave.ErrorOffset = state->__fpu_ip;
+                context->FltSave.ErrorSelector = state->__fpu_cs;
+                context->FltSave.DataOffset = state->__fpu_dp;
+                context->FltSave.DataSelector = state->__fpu_ds;
+                context->FltSave.MxCsr = state->__fpu_mxcsr;
+                context->FltSave.MxCsr_Mask = state->__fpu_mxcsrmask; // note: we don't save the mask for x86
+
+                // Windows stores the floating point registers in a packed layout (each 10-byte register end to end
+                // for a total of 80 bytes). But Mach returns each register in an 16-bit structure (presumably for
+                // alignment purposes). So we can't just memcpy the registers over in a single block, we need to copy
+                // them individually.
+                for (int i = 0; i < 8; i++)
+                {
+                    memcpy(&context->FltSave.FloatRegisters[i], (&state->__fpu_stmm0)[i].__mmst_reg, 10);
+                }
+
+                // AMD64's FLOATING_POINT includes the xmm registers.
+                memcpy(&context->Xmm0, &state->__fpu_xmm0, 8 * 16);
+            }
+            break;
+#else
+#error Unexpected architecture.
+#endif
+        case x86_THREAD_STATE:
+        {
+            x86_thread_state_t *state = (x86_thread_state_t *)threadState;
+            GetThreadContextFromThreadState((thread_state_flavor_t)state->tsh.flavor, (thread_state_t)&state->uts, context);
+        }
+        break;
+
+        case x86_FLOAT_STATE:
+        {
+            x86_float_state_t *state = (x86_float_state_t *)threadState;
+            GetThreadContextFromThreadState((thread_state_flavor_t)state->fsh.flavor, (thread_state_t)&state->ufs, context);
+        }
+        break;
+
+        default:
+            ASSERT_UNCONDITIONALLY("Invalid thread state flavor\n");
+            break;
+    }
+}
+
+// Get Windows style thread context from the MACH port
+kern_return_t GetThreadContextFromPort(mach_port_t port, PAL_LIMITED_CONTEXT* context)
+{
+    kern_return_t machRet = KERN_SUCCESS;
+    mach_msg_type_number_t stateCount;
+    thread_state_flavor_t stateFlavor;
+
+    if (context->ContextFlags & (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS))
+    {
+#ifdef _X86_
+        x86_thread_state32_t state;
+        stateFlavor = x86_THREAD_STATE32;
+#elif defined(_AMD64_)
+        x86_thread_state64_t state;
+        stateFlavor = x86_THREAD_STATE64;
+#else
+#error Unexpected architecture.
+#endif
+        stateCount = sizeof(state) / sizeof(natural_t);
+        machRet = thread_get_state(port, stateFlavor, (thread_state_t)&state, &stateCount);
+        if (machRet != KERN_SUCCESS)
+        {
+            ASSERT_UNCONDITIONALLY("thread_get_state(THREAD_STATE) failed\n");
+            goto exit;
+        }
+
+        GetThreadContextFromThreadState(stateFlavor, (thread_state_t)&state, context);
+    }
+
+    if (context->ContextFlags & CONTEXT_ALL_FLOATING) {
+#ifdef _X86_
+        x86_float_state32_t state;
+        stateFlavor = x86_FLOAT_STATE32;
+#elif defined(_AMD64_)
+        x86_float_state64_t state;
+        stateFlavor = x86_FLOAT_STATE64;
+#else
+#error Unexpected architecture.
+#endif
+        stateCount = sizeof(state) / sizeof(natural_t);
+        machRet = thread_get_state(port, stateFlavor, (thread_state_t)&state, &stateCount);
+        if (machRet != KERN_SUCCESS)
+        {
+            ASSERT_UNCONDITIONALLY("thread_get_state(FLOAT_STATE) failed\n");
+            goto exit;
+        }
+
+        GetThreadContextFromThreadState(stateFlavor, (thread_state_t)&state, context);
+    }
+
+exit:
+    return machRet;
+}
+
+#endif // __APPLE__
+
 typedef UInt32 (__stdcall *HijackCallback)(HANDLE hThread, _In_ PAL_LIMITED_CONTEXT* pThreadContext, _In_opt_ void* pCallbackContext);
 
 REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackCallback callback, _In_opt_ void* pCallbackContext)
 {
+    if (hThread == INVALID_HANDLE_VALUE)
+    {
+        return (UInt32)E_INVALIDARG;
+    }
+
+    UnixHandleBase* handleBase = (UnixHandleBase*)hThread;
+    ASSERT(handleBase->GetType() == UnixHandleType::Thread);
+    ThreadUnixHandle* threadHandle = (ThreadUnixHandle*)handleBase;
+
+#ifdef __APPLE__
+
+    mach_port_t threadPort = pthread_mach_thread_np(*threadHandle->GetObject());
+
+    while (true)
+    {
+        kern_return_t machRet = thread_suspend(threadPort);
+        if (machRet != KERN_SUCCESS)
+        {
+            return E_FAIL;
+        }
+
+        // Ensure that if the thread was running in the kernel, the kernel operation
+        // is safely aborted so that it can be restarted later.
+        machret = thread_abort_safely(hThread);
+        if (machret == KERN_SUCCESS)
+        {
+            break;
+        }
+
+        // The thread was running in the kernel executing a non-atomic operation
+        // that cannot be restarted, so we need to resume the thread and retry
+        machret = thread_resume(hThread);
+        if (machRet != KERN_SUCCESS)
+        {
+            return E_FAIL;
+        }
+    }
+
+    PAL_LIMITED_CONTEXT ctx;
+    HRESULT result;
+    machRet = GetThreadContextFromPort(threadPort, &ctx);
+    if (machRet != KERN_SUCCESS)
+    {
+        result = E_FAIL;
+    }
+    else
+    {
+        result = callback(hThread, &ctx, pCallbackContext) ? S_OK : E_FAIL;
+    }
+
+    machRet = thread_resume(threadPort);
+    if (machRet != KERN_SUCCESS)
+    {
+        // Failure to resume the thread is fatal
+        RhFailFast();
+    }
+
+    return result;
+
+#else // __APPLE__
+
+    // TODO:
+    // - Inject activation into the target thread, passing in a condition variable pointer if possible
+    // - In the activation routine, store the thread context somewhere
+    // - Wait for a condition variable signalled by the activation routine meaning that the thread is waiting
+    // - extract the thread context
+    // - Call the callback
+    // - Signal a condition variable in the activation routine to release it
+    // - ??? Wait for another condition variable indicating that the thread has exited the activation routine
+    // - destroy the condition variables
+
     PORTABILITY_ASSERT("UNIXTODO: Implement this function");
+#endif // __APPLE__
 }
 
 extern "C" UInt32 WaitForSingleObjectEx(HANDLE handle, UInt32 milliseconds, UInt32_BOOL alertable)
