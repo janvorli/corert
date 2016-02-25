@@ -33,6 +33,7 @@
 #include <fcntl.h>
 #include <sys/time.h>
 #include <cstdarg>
+#include <signal.h>
 
 #if !HAVE_SYSCONF && !HAVE_SYSCTL
 #error Neither sysconf nor sysctl is present on the current system
@@ -66,6 +67,238 @@
 #include <mach/mach_time.h>
 static mach_timebase_info_data_t s_TimebaseInfo;
 #endif
+
+#if !__APPLE__
+/* A type to wrap the native context type, which is ucontext_t on some
+ * platforms and another type elsewhere. */
+#if HAVE_UCONTEXT_T
+#include <ucontext.h>
+
+typedef ucontext_t native_context_t;
+#else   // HAVE_UCONTEXT_T
+#error Native context type is not known on this platform!
+#endif // HAVE_UCONTEXT_T
+
+#if HAVE_MACHINE_REG_H
+#include <machine/reg.h>
+#endif  // HAVE_MACHINE_REG_H
+#if HAVE_MACHINE_NPX_H
+#include <machine/npx.h>
+#endif  // HAVE_MACHINE_NPX_H
+
+#if HAVE_PT_REGS
+#include <asm/ptrace.h>
+#endif  // HAVE_PT_REGS
+
+#if HAVE___GREGSET_T
+
+#ifdef BIT64
+#define MCREG_Rbx(mc)       ((mc).__gregs[_REG_RBX])
+#define MCREG_Rsi(mc)       ((mc).__gregs[_REG_RSI])
+#define MCREG_Rdi(mc)       ((mc).__gregs[_REG_RDI])
+#define MCREG_Rbp(mc)       ((mc).__gregs[_REG_RBP])
+#define MCREG_Rax(mc)       ((mc).__gregs[_REG_RAX])
+#define MCREG_Rip(mc)       ((mc).__gregs[_REG_RIP])
+#define MCREG_Rsp(mc)       ((mc).__gregs[_REG_RSP])
+#define MCREG_R12(mc)       ((mc).__gregs[_REG_R12])
+#define MCREG_R13(mc)       ((mc).__gregs[_REG_R13])
+#define MCREG_R14(mc)       ((mc).__gregs[_REG_R14])
+#define MCREG_R15(mc)       ((mc).__gregs[_REG_R15])
+
+#define FPREG_Xmm(uc, index) *(Fp128*)&(((struct fxsave*)(&(uc)->uc_mcontext.__fpregs))->fx_xmm[index])
+
+#else // BIT64
+
+#define MCREG_Ebx(mc)       ((mc).__gregs[_REG_EBX])
+#define MCREG_Esi(mc)       ((mc).__gregs[_REG_ESI])
+#define MCREG_Edi(mc)       ((mc).__gregs[_REG_EDI])
+#define MCREG_Ebp(mc)       ((mc).__gregs[_REG_EBP])
+#define MCREG_Eax(mc)       ((mc).__gregs[_REG_EAX])
+#define MCREG_Eip(mc)       ((mc).__gregs[_REG_EIP])
+#define MCREG_Esp(mc)       ((mc).__gregs[_REG_ESP])
+
+#endif // BIT64
+
+#elif HAVE_GREGSET_T
+
+#ifdef BIT64
+#define MCREG_Rbx(mc)       ((mc).gregs[REG_RBX])
+#define MCREG_Rsi(mc)       ((mc).gregs[REG_RSI])
+#define MCREG_Rdi(mc)       ((mc).gregs[REG_RDI])
+#define MCREG_Rbp(mc)       ((mc).gregs[REG_RBP])
+#define MCREG_Rax(mc)       ((mc).gregs[REG_RAX])
+#define MCREG_Rip(mc)       ((mc).gregs[REG_RIP])
+#define MCREG_Rsp(mc)       ((mc).gregs[REG_RSP])
+#define MCREG_R12(mc)       ((mc).gregs[REG_R12])
+#define MCREG_R13(mc)       ((mc).gregs[REG_R13])
+#define MCREG_R14(mc)       ((mc).gregs[REG_R14])
+#define MCREG_R15(mc)       ((mc).gregs[REG_R15])
+
+#define FPREG_Xmm(uc, index) *(Fp128*)&((uc)->uc_mcontext.fpregs->_xmm[index])
+
+#else // BIT64
+
+#define MCREG_Ebx(mc)       ((mc).gregs[REG_EBX])
+#define MCREG_Esi(mc)       ((mc).gregs[REG_ESI])
+#define MCREG_Edi(mc)       ((mc).gregs[REG_EDI])
+#define MCREG_Ebp(mc)       ((mc).gregs[REG_EBP])
+#define MCREG_Eax(mc)       ((mc).gregs[REG_EAX])
+#define MCREG_Eip(mc)       ((mc).gregs[REG_EIP])
+#define MCREG_Esp(mc)       ((mc).gregs[REG_ESP])
+
+#endif // BIT64
+
+#else // HAVE_GREGSET_T
+
+#ifdef BIT64
+
+#if defined(_ARM64_)
+#define MCREG_X0(mc)      ((mc).regs[0])
+#define MCREG_X1(mc)      ((mc).regs[1])
+#define MCREG_X2(mc)      ((mc).regs[2])
+#define MCREG_X3(mc)      ((mc).regs[3])
+#define MCREG_X4(mc)      ((mc).regs[4])
+#define MCREG_X5(mc)      ((mc).regs[5])
+#define MCREG_X6(mc)      ((mc).regs[6])
+#define MCREG_X7(mc)      ((mc).regs[7])
+#define MCREG_X8(mc)      ((mc).regs[8])
+#define MCREG_X9(mc)      ((mc).regs[9])
+#define MCREG_X10(mc)     ((mc).regs[10])
+#define MCREG_X11(mc)     ((mc).regs[11])
+#define MCREG_X12(mc)     ((mc).regs[12])
+#define MCREG_X13(mc)     ((mc).regs[13])
+#define MCREG_X14(mc)     ((mc).regs[14])
+#define MCREG_X15(mc)     ((mc).regs[15])
+#define MCREG_X16(mc)     ((mc).regs[16])
+#define MCREG_X17(mc)     ((mc).regs[17])
+#define MCREG_X18(mc)     ((mc).regs[18])
+#define MCREG_X19(mc)     ((mc).regs[19])
+#define MCREG_X20(mc)     ((mc).regs[20])
+#define MCREG_X21(mc)     ((mc).regs[21])
+#define MCREG_X22(mc)     ((mc).regs[22])
+#define MCREG_X23(mc)     ((mc).regs[23])
+#define MCREG_X24(mc)     ((mc).regs[24])
+#define MCREG_X25(mc)     ((mc).regs[25])
+#define MCREG_X26(mc)     ((mc).regs[26])
+#define MCREG_X27(mc)     ((mc).regs[27])
+#define MCREG_X28(mc)     ((mc).regs[28])
+#define MCREG_Fp(mc)      ((mc).regs[29])
+#define MCREG_Lr(mc)      ((mc).regs[30])
+
+#define MCREG_Sp(mc)      ((mc).sp)
+#define MCREG_Pc(mc)      ((mc).pc)
+#define MCREG_PState(mc)  ((mc).pstate)
+#define MCREG_Cpsr(mc)    ((mc).cpsr)
+#else
+    // For FreeBSD, as found in x86/ucontext.h
+#define MCREG_Rbp(mc)       ((mc).mc_rbp)
+#define MCREG_Rip(mc)       ((mc).mc_rip)
+#define MCREG_Rsp(mc)       ((mc).mc_rsp)
+#define MCREG_Rsi(mc)       ((mc).mc_rsi)
+#define MCREG_Rdi(mc)       ((mc).mc_rdi)
+#define MCREG_Rbx(mc)       ((mc).mc_rbx)
+#define MCREG_Rax(mc)       ((mc).mc_rax)
+#define MCREG_R12(mc)       ((mc).mc_r12)
+#define MCREG_R13(mc)       ((mc).mc_r13)
+#define MCREG_R14(mc)       ((mc).mc_r14)
+#define MCREG_R15(mc)       ((mc).mc_r15)
+
+  // from x86/fpu.h: struct __envxmm64
+#define FPSTATE(uc)             ((savefpu*)((uc)->uc_mcontext.mc_fpstate))
+#define FPREG_Xmm(uc, index)    *(Fp128*) &(FPSTATE(uc)->sv_xmm[index])
+#endif
+
+#else // BIT64
+
+#if defined(_ARM_)
+
+#define MCREG_R0(mc)        ((mc).arm_r0)
+#define MCREG_R4(mc)        ((mc).arm_r4)
+#define MCREG_R5(mc)        ((mc).arm_r5)
+#define MCREG_R6(mc)        ((mc).arm_r6)
+#define MCREG_R7(mc)        ((mc).arm_r7)
+#define MCREG_R8(mc)        ((mc).arm_r8)
+#define MCREG_R9(mc)        ((mc).arm_r9)
+#define MCREG_R10(mc)       ((mc).arm_r10)
+#define MCREG_R11(mc)       ((mc).arm_fp)
+#define MCREG_Sp(mc)        ((mc).arm_sp)
+#define MCREG_Lr(mc)        ((mc).arm_lr)
+#define MCREG_Pc(mc)        ((mc).arm_pc)
+
+#elif defined(_X86_)
+
+#define MCREG_Ebx(mc)       ((mc).mc_ebx)
+#define MCREG_Esi(mc)       ((mc).mc_esi)
+#define MCREG_Edi(mc)       ((mc).mc_edi)
+#define MCREG_Ebp(mc)       ((mc).mc_ebp)
+#define MCREG_Eax(mc)       ((mc).mc_eax)
+#define MCREG_Eip(mc)       ((mc).mc_eip)
+#define MCREG_Esp(mc)       ((mc).mc_esp)
+
+#else
+#error "Unsupported arch"
+#endif
+
+#endif // BIT64
+
+#endif // HAVE_GREGSET_T
+
+#ifdef _AMD64_
+#define ASSIGN_CONTROL_REGS  \
+        ASSIGN_REG(Rbp, Rbp) \
+        ASSIGN_REG(IP, Rip)  \
+        ASSIGN_REG(Rsp, Rsp)
+
+#define ASSIGN_INTEGER_REGS  \
+        ASSIGN_REG(Rdi, Rdi) \
+        ASSIGN_REG(Rsi, Rsi) \
+        ASSIGN_REG(Rbx, Rbx) \
+        ASSIGN_REG(Rax, Rax) \
+        ASSIGN_REG(R12, R12) \
+        ASSIGN_REG(R13, R13) \
+        ASSIGN_REG(R14, R14) \
+        ASSIGN_REG(R15, R15)
+
+#elif defined(_X86_)
+#define ASSIGN_CONTROL_REGS  \
+        ASSIGN_REG(Rbp, Ebp) \
+        ASSIGN_REG(IP, Eip)  \
+        ASSIGN_REG(Rsp, Esp)
+
+#define ASSIGN_INTEGER_REGS  \
+        ASSIGN_REG(Rdi, Edi) \
+        ASSIGN_REG(Rsi, Esi) \
+        ASSIGN_REG(Rbx, Ebx) \
+        ASSIGN_REG(Rax, Eax)
+
+#elif defined(_ARM_)
+#define ASSIGN_CONTROL_REGS  \
+        ASSIGN_REG(SP, Sp)   \
+        ASSIGN_REG(LR, Lr)   \
+        ASSIGN_REG(IP, Pc)
+
+#define ASSIGN_INTEGER_REGS  \
+        ASSIGN_REG(R0, R0)   \
+        ASSIGN_REG(R4, R4)   \
+        ASSIGN_REG(R5, R5)   \
+        ASSIGN_REG(R6, R6)   \
+        ASSIGN_REG(R7, R7)   \
+        ASSIGN_REG(R8, R8)   \
+        ASSIGN_REG(R9, R9)   \
+        ASSIGN_REG(R10, R10) \
+        ASSIGN_REG(R11, R11)
+
+#elif defined(_ARM64_)
+#error TODO: Add ARM64 registers to PAL_LIMITED_CONTEXT
+#else
+#error Don't know how to assign registers on this architecture
+#endif
+
+#define ASSIGN_ALL_REGS     \
+        ASSIGN_CONTROL_REGS \
+        ASSIGN_INTEGER_REGS \
+
+#endif  // !__APPLE__
 
 using std::nullptr_t;
 
@@ -109,6 +342,10 @@ typedef void* PEXCEPTION_POINTERS;
 typedef Int32 (__stdcall *PVECTORED_EXCEPTION_HANDLER)(
     PEXCEPTION_POINTERS ExceptionInfo
     );
+
+#define INJECT_ACTIVATION_SIGNAL SIGRTMIN
+#define INVALID_HANDLE_VALUE    ((HANDLE)(IntNative)-1)
+#define E_INVALIDARG            0x80070057
 
 #define PAGE_NOACCESS           0x01
 #define PAGE_READWRITE          0x04
@@ -283,6 +520,34 @@ public:
 typedef UnixHandle<UnixHandleType::Event, UnixEvent> EventUnixHandle;
 typedef UnixHandle<UnixHandleType::Thread, pthread_t> ThreadUnixHandle;
 
+void ActivationHandler(int code, siginfo_t *siginfo, void *context);
+
+bool InitializeActivation()
+{
+    bool success = true;
+#ifndef __APPLE__    
+    struct sigaction newAction;
+
+    newAction.sa_flags = SA_RESTART;
+#if HAVE_SIGINFO_T
+    newAction.sa_handler = NULL;
+    newAction.sa_sigaction = ActivationHandler;
+    newAction.sa_flags |= SA_SIGINFO;
+#else   /* HAVE_SIGINFO_T */
+    newAction.sa_handler = SIG_DFL;
+#endif  /* HAVE_SIGINFO_T */
+    sigemptyset(&newAction.sa_mask);
+
+    if (sigaction(INJECT_ACTIVATION_SIGNAL, &newAction, NULL) == -1)
+    {
+        ASSERT_UNCONDITIONALLY("Failed to install activation signal handler");    
+        success = false;
+    }
+#endif // !__APPLE__
+
+    return success;    
+}
+
 // The Redhawk PAL must be initialized before any of its exports can be called. Returns true for a successful
 // initialization and false on failure.
 __attribute__((constructor))
@@ -302,6 +567,11 @@ bool PalInit()
 #endif
 
     if (!InitializeFlushProcessWriteBuffers())
+    {
+        return false;
+    }
+
+    if (!InitializeActivation())
     {
         return false;
     }
@@ -925,134 +1195,54 @@ extern "C" UInt32_BOOL HeapFree(HANDLE heap, UInt32 flags, void * mem)
     return UInt32_TRUE;
 }
 
-// TODO: create a separate OSX folder? Or file - PalRedhawkOsx.cpp???
 #ifdef __APPLE__
 
-void GetThreadContextFromThreadState(thread_state_flavor_t threadStateFlavor, thread_state_t threadState, PAL_LIMITED_CONTEXT* context)
+// UNIXTODO: The PAL_LIMITED_CONTEXT needs to be updated based on the Unix AMD64 calling convention
+// UNIXTODO: We need to modify the REGDISPLAY the same way
+
+void GetPalContextFromThreadState(thread_state_flavor_t threadStateFlavor, thread_state_t threadState, PAL_LIMITED_CONTEXT* context)
 {
     switch (threadStateFlavor)
     {
 #ifdef _X86_
         case x86_THREAD_STATE32:
-            if (context->ContextFlags & (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS))
-            {
-                x86_thread_state32_t *state = (x86_thread_state32_t *)threadState;
+            x86_thread_state32_t *state = (x86_thread_state32_t *)threadState;
 
-                context->Eax = state->eax;
-                context->Ebx = state->ebx;
-                context->Ecx = state->ecx;
-                context->Edx = state->edx;
-                context->Edi = state->edi;
-                context->Esi = state->esi;
-                context->Ebp = state->ebp;
-                context->Esp = state->esp;
-                context->SegSs = state->ss;
-                context->EFlags = state->eflags;
-                context->Eip = state->eip;
-                context->SegCs = state->cs;
-                context->SegDs = state->ds;
-                context->SegEs = state->es;
-                context->SegFs = state->fs;
-                context->SegGs = state->gs;
-            }
+            context->Rax = state->eax;
+            context->Rbx = state->ebx;
+            context->Rdi = state->edi;
+            context->Rsi = state->esi;
+            context->Rbp = state->ebp;
+            context->Rsp = state->esp;
+            context->IP = state->eip;
             break;
 
         case x86_FLOAT_STATE32:
-        {
-            x86_float_state32_t *state = (x86_float_state32_t *)threadState;
-
-            if (context->ContextFlags & CONTEXT_FLOATING_POINT)
-            {
-                context->FloatSave.ControlWord = *(DWORD*)&state->fpu_fcw;
-                context->FloatSave.StatusWord = *(DWORD*)&state->fpu_fsw;
-                context->FloatSave.TagWord = state->fpu_ftw;
-                context->FloatSave.ErrorOffset = state->fpu_ip;
-                context->FloatSave.ErrorSelector = state->fpu_cs;
-                context->FloatSave.DataOffset = state->fpu_dp;
-                context->FloatSave.DataSelector = state->fpu_ds;
-                context->FloatSave.Cr0NpxState = state->fpu_mxcsr;
-
-                // Windows stores the floating point registers in a packed layout (each 10-byte register end to end
-                // for a total of 80 bytes). But Mach returns each register in an 16-bit structure (presumably for
-                // alignment purposes). So we can't just memcpy the registers over in a single block, we need to copy
-                // them individually.
-                for (int i = 0; i < 8; i++)
-                {
-                    memcpy(&context->FloatSave.RegisterArea[i * 10], (&state->fpu_stmm0)[i].mmst_reg, 10);
-                }
-            }
-
-            if (context->ContextFlags & CONTEXT_EXTENDED_REGISTERS)
-            {
-                // The only extended register information that Mach will tell us about are the xmm register values.
-                // Both Windows and Mach store the registers in a packed layout (each of the 8 registers is 16 bytes)
-                // so we can simply memcpy them across.
-                memcpy(context->ExtendedRegisters + CONTEXT_EXREG_XMM_OFFSET, &state->fpu_xmm0, 8 * 16);
-            }
-        }
-        break;
+            // TODO: why doesn't x86 limited context contain xmm registers?
+            //x86_float_state32_t *state = (x86_float_state32_t *)threadState;
+            //memcpy(&context->Xmm6, &state->fpu_xmm6, 2 * 16);
+            break;
 
 #elif defined(_AMD64_)
         case x86_THREAD_STATE64:
-            if (context->ContextFlags & (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS))
-            {
-                x86_thread_state64_t *state = (x86_thread_state64_t *)threadState;
+            x86_thread_state64_t *state = (x86_thread_state64_t *)threadState;
 
-                context->Rax = state->__rax;
-                context->Rbx = state->__rbx;
-                context->Rcx = state->__rcx;
-                context->Rdx = state->__rdx;
-                context->Rdi = state->__rdi;
-                context->Rsi = state->__rsi;
-                context->Rbp = state->__rbp;
-                context->Rsp = state->__rsp;
-                context->R8 = state->__r8;
-                context->R9 = state->__r9;
-                context->R10 = state->__r10;
-                context->R11 = state->__r11;
-                context->R12 = state->__r12;
-                context->R13 = state->__r13;
-                context->R14 = state->__r14;
-                context->R15 = state->__r15;
-                context->EFlags = state->__rflags;
-                context->Rip = state->__rip;
-                context->SegCs = state->__cs;
-                // We cannot get the SS, DS and ES registers, so zero them out
-                context->SegSs = 0;
-                context->SegDs = 0;
-                context->SegEs = 0;
-                context->SegFs = state->__fs;
-                context->SegGs = state->__gs;
-            }
+            context->Rax = state->__rax;
+            context->Rbx = state->__rbx;
+            context->Rdi = state->__rdi;
+            context->Rsi = state->__rsi;
+            context->Rbp = state->__rbp;
+            context->Rsp = state->__rsp;
+            context->R12 = state->__r12;
+            context->R13 = state->__r13;
+            context->R14 = state->__r14;
+            context->R15 = state->__r15;
+            context->IP = state->__rip;
             break;
 
         case x86_FLOAT_STATE64:
-            if (context->ContextFlags & CONTEXT_FLOATING_POINT)
-            {
-                x86_float_state64_t *state = (x86_float_state64_t *)threadState;
-
-                context->FltSave.ControlWord = *(DWORD*)&state->__fpu_fcw;
-                context->FltSave.StatusWord = *(DWORD*)&state->__fpu_fsw;
-                context->FltSave.TagWord = state->__fpu_ftw;
-                context->FltSave.ErrorOffset = state->__fpu_ip;
-                context->FltSave.ErrorSelector = state->__fpu_cs;
-                context->FltSave.DataOffset = state->__fpu_dp;
-                context->FltSave.DataSelector = state->__fpu_ds;
-                context->FltSave.MxCsr = state->__fpu_mxcsr;
-                context->FltSave.MxCsr_Mask = state->__fpu_mxcsrmask; // note: we don't save the mask for x86
-
-                // Windows stores the floating point registers in a packed layout (each 10-byte register end to end
-                // for a total of 80 bytes). But Mach returns each register in an 16-bit structure (presumably for
-                // alignment purposes). So we can't just memcpy the registers over in a single block, we need to copy
-                // them individually.
-                for (int i = 0; i < 8; i++)
-                {
-                    memcpy(&context->FltSave.FloatRegisters[i], (&state->__fpu_stmm0)[i].__mmst_reg, 10);
-                }
-
-                // AMD64's FLOATING_POINT includes the xmm registers.
-                memcpy(&context->Xmm0, &state->__fpu_xmm0, 8 * 16);
-            }
+            x86_float_state64_t *state = (x86_float_state64_t *)threadState;
+            memcpy(&context->Xmm6, &state->__fpu_xmm6, 10 * 16);
             break;
 #else
 #error Unexpected architecture.
@@ -1060,14 +1250,14 @@ void GetThreadContextFromThreadState(thread_state_flavor_t threadStateFlavor, th
         case x86_THREAD_STATE:
         {
             x86_thread_state_t *state = (x86_thread_state_t *)threadState;
-            GetThreadContextFromThreadState((thread_state_flavor_t)state->tsh.flavor, (thread_state_t)&state->uts, context);
+            GetPalContextFromThreadState((thread_state_flavor_t)state->tsh.flavor, (thread_state_t)&state->uts, context);
         }
         break;
 
         case x86_FLOAT_STATE:
         {
             x86_float_state_t *state = (x86_float_state_t *)threadState;
-            GetThreadContextFromThreadState((thread_state_flavor_t)state->fsh.flavor, (thread_state_t)&state->ufs, context);
+            GetPalContextFromThreadState((thread_state_flavor_t)state->fsh.flavor, (thread_state_t)&state->ufs, context);
         }
         break;
 
@@ -1078,54 +1268,49 @@ void GetThreadContextFromThreadState(thread_state_flavor_t threadStateFlavor, th
 }
 
 // Get Windows style thread context from the MACH port
-kern_return_t GetThreadContextFromPort(mach_port_t port, PAL_LIMITED_CONTEXT* context)
+kern_return_t GetPalContextFromPort(mach_port_t port, PAL_LIMITED_CONTEXT* context)
 {
     kern_return_t machRet = KERN_SUCCESS;
     mach_msg_type_number_t stateCount;
     thread_state_flavor_t stateFlavor;
 
-    if (context->ContextFlags & (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_SEGMENTS))
+#ifdef _X86_
+    x86_thread_state32_t state;
+    stateFlavor = x86_THREAD_STATE32;
+#elif defined(_AMD64_)
+    x86_thread_state64_t state;
+    stateFlavor = x86_THREAD_STATE64;
+#else
+#error Unexpected architecture.
+#endif
+    stateCount = sizeof(state) / sizeof(natural_t);
+    machRet = thread_get_state(port, stateFlavor, (thread_state_t)&state, &stateCount);
+    if (machRet != KERN_SUCCESS)
     {
+        ASSERT_UNCONDITIONALLY("thread_get_state(THREAD_STATE) failed\n");
+        goto exit;
+    }
+
+    GetPalContextFromThreadState(stateFlavor, (thread_state_t)&state, context);
+
 #ifdef _X86_
-        x86_thread_state32_t state;
-        stateFlavor = x86_THREAD_STATE32;
+    x86_float_state32_t state;
+    stateFlavor = x86_FLOAT_STATE32;
 #elif defined(_AMD64_)
-        x86_thread_state64_t state;
-        stateFlavor = x86_THREAD_STATE64;
+    x86_float_state64_t state;
+    stateFlavor = x86_FLOAT_STATE64;
 #else
 #error Unexpected architecture.
 #endif
-        stateCount = sizeof(state) / sizeof(natural_t);
-        machRet = thread_get_state(port, stateFlavor, (thread_state_t)&state, &stateCount);
-        if (machRet != KERN_SUCCESS)
-        {
-            ASSERT_UNCONDITIONALLY("thread_get_state(THREAD_STATE) failed\n");
-            goto exit;
-        }
-
-        GetThreadContextFromThreadState(stateFlavor, (thread_state_t)&state, context);
+    stateCount = sizeof(state) / sizeof(natural_t);
+    machRet = thread_get_state(port, stateFlavor, (thread_state_t)&state, &stateCount);
+    if (machRet != KERN_SUCCESS)
+    {
+        ASSERT_UNCONDITIONALLY("thread_get_state(FLOAT_STATE) failed\n");
+        goto exit;
     }
 
-    if (context->ContextFlags & CONTEXT_ALL_FLOATING) {
-#ifdef _X86_
-        x86_float_state32_t state;
-        stateFlavor = x86_FLOAT_STATE32;
-#elif defined(_AMD64_)
-        x86_float_state64_t state;
-        stateFlavor = x86_FLOAT_STATE64;
-#else
-#error Unexpected architecture.
-#endif
-        stateCount = sizeof(state) / sizeof(natural_t);
-        machRet = thread_get_state(port, stateFlavor, (thread_state_t)&state, &stateCount);
-        if (machRet != KERN_SUCCESS)
-        {
-            ASSERT_UNCONDITIONALLY("thread_get_state(FLOAT_STATE) failed\n");
-            goto exit;
-        }
-
-        GetThreadContextFromThreadState(stateFlavor, (thread_state_t)&state, context);
-    }
+    GetPalContextFromThreadState(stateFlavor, (thread_state_t)&state, context);
 
 exit:
     return machRet;
@@ -1134,6 +1319,81 @@ exit:
 #endif // __APPLE__
 
 typedef UInt32 (__stdcall *HijackCallback)(HANDLE hThread, _In_ PAL_LIMITED_CONTEXT* pThreadContext, _In_opt_ void* pCallbackContext);
+
+#ifndef __APPLE__
+
+enum class ActivationInjectionState
+{
+    Initial,
+    ContextReady,
+    HijackCompleted,
+    ActivationExited
+};
+
+static ActivationInjectionState g_activationInjectionState;
+static pthread_mutex_t g_activationMutex;
+static pthread_cond_t g_activationCondition;
+static PAL_LIMITED_CONTEXT g_activationContext;
+
+void WaitForActivationState(ActivationInjectionState state)
+{
+    pthread_mutex_lock(&g_activationMutex);
+    // Wait until the activation routine signals that the context is ready
+    while (g_activationInjectionState != state)
+    {
+        int st = pthread_cond_wait(&g_activationCondition, &g_activationMutex);
+        FATAL_ASSERT(st == 0, "Failed to wait for activation condition");
+    }
+    pthread_mutex_unlock(&g_activationMutex);
+}
+
+void ChangeActivationState(ActivationInjectionState state)
+{
+    pthread_mutex_lock(&g_activationMutex);
+    g_activationInjectionState = state;
+    int st = pthread_cond_signal(&g_activationCondition);
+    FATAL_ASSERT(st == 0, "Failed to signal activation condition");
+    pthread_mutex_unlock(&g_activationMutex);
+}
+
+void GetPalContextFromNativeContext(native_context_t *nativeContext, PAL_LIMITED_CONTEXT* palContext)
+{
+#define ASSIGN_REG(palReg, nativeReg) palContext->palReg = MCREG_##nativeReg(nativeContext->uc_mcontext);
+    ASSIGN_ALL_REGS
+#undef ASSIGN_REG
+
+#if HAVE_GREGSET_T || HAVE___GREGSET_T
+#if HAVE_GREGSET_T
+    if (nativeContext->uc_mcontext.fpregs == nullptr)
+#elif HAVE___GREGSET_T
+    if (nativeContext->uc_mcontext.__fpregs == nullptr)
+#endif
+    {
+        return;
+    }
+#endif
+
+#ifdef _AMD64_
+    for (int i = 6; i < 16; i++)
+    {
+        (&palContext->Xmm6)[i - 6] = FPREG_Xmm(nativeContext, i);
+    }
+#endif
+}
+
+void ActivationHandler(int code, siginfo_t *siginfo, void *context)
+{
+    ASSERT(g_activationInjectionState == ActivationInjectionState::Initial);
+
+    native_context_t *ucontext = (native_context_t *)context;
+    GetPalContextFromNativeContext(ucontext, &g_activationContext);
+
+    ChangeActivationState(ActivationInjectionState::ContextReady);
+    WaitForActivationState(ActivationInjectionState::HijackCompleted);
+    ChangeActivationState(ActivationInjectionState::ActivationExited);
+}
+
+#endif // __APPLE__
 
 REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackCallback callback, _In_opt_ void* pCallbackContext)
 {
@@ -1153,10 +1413,7 @@ REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackC
     while (true)
     {
         kern_return_t machRet = thread_suspend(threadPort);
-        if (machRet != KERN_SUCCESS)
-        {
-            return E_FAIL;
-        }
+        FATAL_ASSERT(machRet == KERN_SUCCESS, "Failed to suspend thread");
 
         // Ensure that if the thread was running in the kernel, the kernel operation
         // is safely aborted so that it can be restarted later.
@@ -1169,10 +1426,7 @@ REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackC
         // The thread was running in the kernel executing a non-atomic operation
         // that cannot be restarted, so we need to resume the thread and retry
         machret = thread_resume(hThread);
-        if (machRet != KERN_SUCCESS)
-        {
-            return E_FAIL;
-        }
+        FATAL_ASSERT(machRet == KERN_SUCCESS, "Failed to resume thread");
     }
 
     PAL_LIMITED_CONTEXT ctx;
@@ -1188,28 +1442,29 @@ REDHAWK_PALEXPORT uint32_t REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackC
     }
 
     machRet = thread_resume(threadPort);
-    if (machRet != KERN_SUCCESS)
-    {
-        // Failure to resume the thread is fatal
-        RhFailFast();
-    }
-
-    return result;
+    FATAL_ASSERT(machRet == KERN_SUCCESS, "Failed to resume suspended thread");
 
 #else // __APPLE__
 
-    // TODO:
-    // - Inject activation into the target thread, passing in a condition variable pointer if possible
-    // - In the activation routine, store the thread context somewhere
-    // - Wait for a condition variable signalled by the activation routine meaning that the thread is waiting
-    // - extract the thread context
-    // - Call the callback
-    // - Signal a condition variable in the activation routine to release it
-    // - ??? Wait for another condition variable indicating that the thread has exited the activation routine
-    // - destroy the condition variables
+    g_activationInjectionState = ActivationInjectionState::Initial;
 
-    PORTABILITY_ASSERT("UNIXTODO: Implement this function");
+    // Send activation signal to the target thread, which results in a call to the activation routine
+    int st = pthread_kill(*threadHandle->GetObject(), INJECT_ACTIVATION_SIGNAL);
+    FATAL_ASSERT(st == 0, "Failed to send activation signal to thread");
+
+    // Wait until the activation routine signals that the context is ready
+    WaitForActivationState(ActivationInjectionState::ContextReady);
+
+    HRESULT result = callback(hThread, &g_activationContext, pCallbackContext) ? S_OK : E_FAIL;
+
+    ChangeActivationState(ActivationInjectionState::HijackCompleted);
+
+    // Wait until the activation routine signals that it is exiting
+    WaitForActivationState(ActivationInjectionState::ActivationExited);
+
 #endif // __APPLE__
+
+    return result;
 }
 
 extern "C" UInt32 WaitForSingleObjectEx(HANDLE handle, UInt32 milliseconds, UInt32_BOOL alertable)
