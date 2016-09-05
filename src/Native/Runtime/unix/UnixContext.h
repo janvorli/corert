@@ -10,8 +10,15 @@ void NativeContextToPalContext(const void* context, PAL_LIMITED_CONTEXT* palCont
 // Redirect Unix native context to the PAL_LIMITED_CONTEXT and also set the first two argument registers
 void RedirectNativeContext(void* context, const PAL_LIMITED_CONTEXT* palContext, UIntNative arg0Reg, UIntNative arg1Reg);
 
+#ifdef __APPLE__
+// Extract context from a mach port to the PAL_LIMITED_CONTEXT
+bool PortToPalContext(void* port, PAL_LIMITED_CONTEXT* palContext);
+#endif // __APPLE__
+
 // Find LSDA and start address for a function at address controlPC
 bool FindProcInfo(UIntNative controlPC, UIntNative* startAddress, UIntNative* lsda);
+
+struct REGDISPLAY;
 // Virtually unwind stack to the caller of the context specified by the REGDISPLAY
 bool VirtualUnwind(REGDISPLAY* pRegisterSet);
 

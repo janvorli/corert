@@ -17,6 +17,23 @@
 #include <ucontext.h>
 #endif  // HAVE_UCONTEXT_T
 
+#if HAVE_MACH_VM_TYPES_H
+#include <mach/vm_types.h>
+#endif // HAVE_MACH_VM_TYPES_H
+
+#if HAVE_MACH_VM_PARAM_H
+#include <mach/vm_param.h>
+#endif  // HAVE_MACH_VM_PARAM_H
+
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/vm_statistics.h>
+#include <mach/mach_types.h>
+#include <mach/mach_init.h>
+#include <mach/mach_host.h>
+#include <mach/mach_port.h>
+#endif // __APPLE__
+
 #include "UnixContext.h"
 
 #ifdef __APPLE__
@@ -486,6 +503,69 @@ uint64_t GetRegisterValueByIndex(void* context, uint32_t index)
     return 0;
 }
 
+#ifdef __APPLE__
+
+#ifndef _AMD64_
+#error Unexpected architecture.
+#endif
+
+void ThreadStateToPalContext(thread_state_flavor_t threadStateFlavor, thread_state_t threadState, PAL_LIMITED_CONTEXT* palContext)
+{
+    switch (threadStateFlavor)
+    {
+        case x86_THREAD_STATE64:
+            {
+                x86_thread_state64_t *state = (x86_thread_state64_t *)threadState;
+
+                palContext->Rbx = state->__rbx;
+                palContext->Rbp = state->__rbp;
+                palContext->R12 = state->__r12;
+                palContext->R13 = state->__r13;
+                palContext->R14 = state->__r14;
+                palContext->R15 = state->__r15;
+                palContext->IP = state->__rip;
+                palContext->Rsp = state->__rsp;
+            }
+            break;
+
+        case x86_THREAD_STATE:
+            {
+                x86_thread_state_t *state = (x86_thread_state_t *)threadState;
+                ThreadStateToPalContext((thread_state_flavor_t)state->tsh.flavor, (thread_state_t)&state->uts, palContext);
+            }
+            break;
+
+        default:
+            ASSERT_UNCONDITIONALLY("Invalid thread state flavor\n");
+            break;
+    }
+}
+
+// Extract context from a mach port to the PAL_LIMITED_CONTEXT
+bool PortToPalContext(void* port, PAL_LIMITED_CONTEXT* palContext)
+{
+    mach_port_t machPort = *(mach_port_t*)port;
+    kern_return_t machRet = KERN_SUCCESS;
+    mach_msg_type_number_t stateCount;
+    x86_thread_state64_t state;
+    thread_state_flavor_t stateFlavor = x86_THREAD_STATE64;
+
+    stateCount = sizeof(state) / sizeof(natural_t);
+    machRet = thread_get_state(machPort, stateFlavor, (thread_state_t)&state, &stateCount);
+    if (machRet == KERN_SUCCESS)
+    {
+        ThreadStateToPalContext(stateFlavor, (thread_state_t)&state, palContext);
+    }
+    else
+    {
+        ASSERT_UNCONDITIONALLY("thread_get_state(THREAD_STATE) failed\n");
+    }
+
+    return machRet == KERN_SUCCESS;
+}
+
+#endif // __APPLE__
+
 // Get value of the program counter from the native context
 uint64_t GetPC(void* context)
 {
@@ -563,3 +643,4 @@ bool VirtualUnwind(REGDISPLAY* pRegisterSet)
 
     return true;
 }
+

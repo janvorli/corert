@@ -20,6 +20,7 @@
 #include "gcenv.os.h"
 #include "holder.h"
 #include "HardwareExceptions.h"
+#include "UnixContext.h"
 
 #include <unistd.h>
 #include <sched.h>
@@ -51,6 +52,14 @@
 #include <sys/sysctl.h>
 #endif
 
+#if HAVE_UCONTEXT_T
+#include <ucontext.h>
+#endif  // HAVE_UCONTEXT_T
+
+#if HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif // HAVE_EVENTFD
+
 #if HAVE_SYS_VMPARAM_H
 #include <sys/vmparam.h>
 #endif  // HAVE_SYS_VMPARAM_H
@@ -64,6 +73,7 @@
 #endif  // HAVE_MACH_VM_PARAM_H
 
 #ifdef __APPLE__
+#include <mach/mach.h>
 #include <mach/vm_statistics.h>
 #include <mach/mach_types.h>
 #include <mach/mach_init.h>
@@ -124,6 +134,7 @@ typedef void* PCONTEXT;
 typedef void* PEXCEPTION_RECORD;
 
 #define INVALID_HANDLE_VALUE    ((HANDLE)(IntNative)-1)
+#define E_INVALIDARG            0x80070057
 
 #define PAGE_NOACCESS           0x01
 #define PAGE_READWRITE          0x04
@@ -415,6 +426,8 @@ extern "C" int __cxa_thread_atexit(void (*)(void*), void*, void *);
 extern "C" void *__dso_handle;
 #endif
 
+bool InitializeActivation();
+
 // The Redhawk PAL must be initialized before any of its exports can be called. Returns true for a successful
 // initialization and false on failure.
 REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalInit()
@@ -438,6 +451,11 @@ REDHAWK_PALEXPORT bool REDHAWK_PALAPI PalInit()
     }
 #ifndef USE_PORTABLE_HELPERS
     if (!InitializeHardwareExceptionHandling())
+    {
+        return false;
+    }
+
+    if (!InitializeActivation())
     {
         return false;
     }
@@ -1066,12 +1084,228 @@ extern "C" UInt32_BOOL HeapFree(HANDLE heap, UInt32 flags, void * mem)
     return UInt32_TRUE;
 }
 
-typedef UInt32 (__stdcall *HijackCallback)(HANDLE hThread, _In_ PAL_LIMITED_CONTEXT* pThreadContext, _In_opt_ void* pCallbackContext);
+#ifndef USE_PORTABLE_HELPERS
 
-REDHAWK_PALEXPORT UInt32 REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ HijackCallback callback, _In_opt_ void* pCallbackContext)
+#ifndef __APPLE__
+
+#define INJECT_ACTIVATION_SIGNAL SIGRTMIN
+
+static PAL_LIMITED_CONTEXT g_activationContext;
+
+// Event class that can be used in a signal handler.
+// Regular pthread mutex is not safe for that purpose.
+// It uses eventfd as the most efficient mean if present on the
+// target platform or a pipe as a fallback mechanism.
+#if HAVE_EVENTFD
+
+class SignalSafeEvent
 {
-    // UNIXTODO: Implement PalHijack
-    return E_FAIL;
+    int m_eventFd = -1;
+
+public:
+    bool Create()
+    {
+        m_eventFd = eventfd(0, 0);
+        return m_eventFd != -1;
+    }
+
+    void Set()
+    {
+        int st;
+        do
+        {
+            st = eventfd_write(m_eventFd, 1);
+        }
+        while ((st == -1) && (errno == EINTR));
+
+        FATAL_ASSERT(st == 0, "Failed to write to eventfd");
+    }
+
+    void Wait()
+    {
+        int st;
+        do
+        {
+            eventfd_t value;
+            st = eventfd_read(m_eventFd, &value);
+            ASSERT(value == 1);
+        }
+        while ((st == -1) && (errno == EINTR));
+
+        FATAL_ASSERT(st == 0, "Failed to read from eventfd");
+    }
+};
+
+#else // HAVE_EVENTFD
+
+class SignalSafeEvent
+{
+    int m_pipeFd[2];
+
+public:
+    bool Create()
+    {
+        return pipe(m_pipeFd) != -1;
+    }
+
+    void Set()
+    {
+        char dummy = '\0';
+        ssize_t bytesWritten;
+        do
+        {
+            bytesWritten = write(m_pipeFd[1], &dummy, sizeof(char));
+        }
+        while ((bytesWritten == -1) && (errno == EINTR))
+
+        FATAL_ASSERT(bytesWritten == sizeof(char), "Failed to write to event pipe");
+    }
+
+    void Wait()
+    {
+        char dummy;
+
+        ssize_t bytesRead;
+        do
+        {
+            bytesRead = read(m_pipeFd[0], &dummy, sizeof(char));
+        }
+
+        FATAL_ASSERT(bytesRead == sizeof(char), "Failed to read from event pipe");
+    }
+};
+
+#endif
+
+// events used to synchronize holding a thread in an activation handler and 
+static SignalSafeEvent g_activationHandlerEvent;
+static SignalSafeEvent g_activationRequestorEvent;
+
+// Signal handler that handles the activation signal.
+void ActivationHandler(int code, siginfo_t *siginfo, void *context)
+{
+    ucontext_t *ucontext = (ucontext_t *)context;
+    NativeContextToPalContext(ucontext, &g_activationContext);
+
+    // Signal the requesting thread that the context is ready
+    g_activationRequestorEvent.Set();
+    // Wait until the requesting thread is done hijacking the current one
+    g_activationHandlerEvent.Wait();
+}
+
+#endif // !__APPLE__
+
+// Initialize the activation support
+bool InitializeActivation()
+{
+    bool success = true;
+
+#ifndef __APPLE__
+    struct sigaction newAction;
+
+    newAction.sa_flags = SA_RESTART;
+#if HAVE_SIGINFO_T
+    newAction.sa_handler = NULL;
+    newAction.sa_sigaction = ActivationHandler;
+    newAction.sa_flags |= SA_SIGINFO;
+#else   /* HAVE_SIGINFO_T */
+    newAction.sa_handler = SIG_DFL;
+#endif  /* HAVE_SIGINFO_T */
+    sigemptyset(&newAction.sa_mask);
+
+    if (sigaction(INJECT_ACTIVATION_SIGNAL, &newAction, NULL) == -1)
+    {
+        ASSERT_UNCONDITIONALLY("Failed to install activation signal handler");
+        success = false;
+    }
+
+    if (success && !g_activationHandlerEvent.Create())
+    {
+        ASSERT_UNCONDITIONALLY("Failed to create activation handler event");
+        success = false;
+    }
+
+    if (success && !g_activationRequestorEvent.Create())
+    {
+        ASSERT_UNCONDITIONALLY("Failed to create activation requestor event");
+        success = false;
+    }
+
+#endif // __APPLE__
+
+    return success;
+}
+
+#endif // USE_PORTABLE_HELPERS
+
+typedef UInt32 (__stdcall *PalHijackCallback)(HANDLE hThread, _In_ PAL_LIMITED_CONTEXT* pThreadContext, _In_opt_ void* pCallbackContext);
+
+REDHAWK_PALEXPORT UInt32 REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ PalHijackCallback callback, _In_opt_ void* pCallbackContext)
+{
+    if (hThread == INVALID_HANDLE_VALUE)
+    {
+        return E_INVALIDARG;
+    }
+
+    HRESULT result = E_FAIL;
+
+#ifndef USE_PORTABLE_HELPERS
+    UnixHandleBase* handleBase = (UnixHandleBase*)hThread;
+    ASSERT(handleBase->GetType() == UnixHandleType::Thread);
+    ThreadUnixHandle* threadHandle = (ThreadUnixHandle*)handleBase;
+
+#ifdef __APPLE__
+
+    mach_port_t threadPort = pthread_mach_thread_np(*threadHandle->GetObject());
+    kern_return_t machRet;
+    
+    while (true)
+    {
+        machRet = thread_suspend(threadPort);
+        FATAL_ASSERT(machRet == KERN_SUCCESS, "Failed to suspend thread");
+
+        // Ensure that if the thread was running in the kernel, the kernel operation
+        // is safely aborted so that it can be restarted later.
+        machRet = thread_abort_safely(threadPort);
+        if (machRet == KERN_SUCCESS)
+        {
+            break;
+        }
+
+        // The thread was running in the kernel executing a non-atomic operation
+        // that cannot be restarted, so we need to resume the thread and retry
+        machRet = thread_resume(threadPort);
+        FATAL_ASSERT(machRet == KERN_SUCCESS, "Failed to resume thread");
+    }
+
+    PAL_LIMITED_CONTEXT ctx;
+    if (PortToPalContext(&threadPort, &ctx))
+    {
+        result = callback(hThread, &ctx, pCallbackContext) ? S_OK : E_FAIL;
+    }
+
+    machRet = thread_resume(threadPort);
+    FATAL_ASSERT(machRet == KERN_SUCCESS, "Failed to resume suspended thread");
+
+#else // __APPLE__
+
+    // Send activation signal to the target thread, which results in a call to the activation routine
+    int st = pthread_kill(*threadHandle->GetObject(), INJECT_ACTIVATION_SIGNAL);
+    FATAL_ASSERT(st == 0, "Failed to send activation signal to thread");
+
+    // Wait until the activation handler signals that the g_activationContext is ready
+    g_activationRequestorEvent.Wait();
+
+    result = callback(hThread, &g_activationContext, pCallbackContext) ? S_OK : E_FAIL;
+
+    // Release the thread waiting in the activation handler
+    g_activationHandlerEvent.Set();
+
+#endif // __APPLE__
+
+#endif // USE_PORTABLE_HELPERS
+
+    return result;
 }
 
 extern "C" UInt32 WaitForSingleObjectEx(HANDLE handle, UInt32 milliseconds, UInt32_BOOL alertable)
@@ -1809,3 +2043,4 @@ void CLRCriticalSection::Leave()
 {
     pthread_mutex_unlock(&m_cs.mutex);
 }
+

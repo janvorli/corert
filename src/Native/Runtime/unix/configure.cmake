@@ -114,4 +114,12 @@ int main(int argc, char **argv)
     return 0;
 }" HAVE_THREAD_LOCAL)
 
+check_cxx_source_compiles("
+#include <sys/eventfd.h>
+
+int main(int argc, char **argv)
+{
+    return eventfd(0, 0);
+}" HAVE_EVENTFD)
+
 configure_file(${CMAKE_CURRENT_LIST_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
