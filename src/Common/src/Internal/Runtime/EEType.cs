@@ -570,7 +570,7 @@ namespace Internal.Runtime
                 Debug.Assert(optionalFields != null);
 
                 const UInt16 NoSlot = 0xFFFF;
-                UInt16 uiSlot = (UInt16)OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.OFT_ICastableIsInstSlot, NoSlot);
+                UInt16 uiSlot = (UInt16)OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.ICastableIsInstSlot, NoSlot);
                 if (uiSlot != NoSlot)
                 {
                     if (uiSlot < NumVtableSlots)
@@ -601,7 +601,7 @@ namespace Internal.Runtime
                 Debug.Assert(optionalFields != null);
 
                 const UInt16 NoSlot = 0xFFFF;
-                UInt16 uiSlot = (UInt16)OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.OFT_ICastableGetImplTypeSlot, NoSlot);
+                UInt16 uiSlot = (UInt16)OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.ICastableGetImplTypeSlot, NoSlot);
                 if (uiSlot != NoSlot)
                 {
                     if (uiSlot < NumVtableSlots)
@@ -668,7 +668,7 @@ namespace Internal.Runtime
 
                 // Get the value from the optional fields. The default is zero if that particular field was not included.
                 // The low bits of this field is the ValueType field padding, the rest of the byte is the alignment if present
-                UInt32 ValueTypeFieldPaddingData = OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.OFT_ValueTypeFieldPadding, 0);
+                UInt32 ValueTypeFieldPaddingData = OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.ValueTypeFieldPadding, 0);
                 UInt32 padding = ValueTypeFieldPaddingData & ValueTypePaddingLowMask;
                 // If there is additional padding, the other bits have that data
                 padding |= (ValueTypeFieldPaddingData & ValueTypePaddingHighMask) >> (ValueTypePaddingHighShift - ValueTypePaddingAlignmentShift);
@@ -719,7 +719,7 @@ namespace Internal.Runtime
                 byte* optionalFields = OptionalFieldsPtr;
                 if (optionalFields == null)
                     return false;
-                UInt32 idxDispatchMap = OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.OFT_DispatchMap, 0xffffffff);
+                UInt32 idxDispatchMap = OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.DispatchMap, 0xffffffff);
                 if (idxDispatchMap == 0xffffffff)
                 {
                     if (HasDynamicallyAllocatedDispatchMap)
@@ -898,7 +898,7 @@ namespace Internal.Runtime
                 // The offset is never zero (Nullable has a boolean there indicating whether the value is valid). So the
                 // offset is encoded - 1 to save space. The zero below is the default value if the field wasn't encoded at
                 // all.
-                return (byte)(OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.OFT_NullableValueOffset, 0) + 1);
+                return (byte)(OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.NullableValueOffset, 0) + 1);
             }
         }
 
@@ -1039,7 +1039,7 @@ namespace Internal.Runtime
             {
                 // If there are no optional fields then none of the rare flags have been set.
                 // Get the flags from the optional fields. The default is zero if that particular field was not included.
-                return HasOptionalFields ? (EETypeRareFlags)OptionalFieldsReader.GetInlineField(OptionalFieldsPtr, EETypeOptionalFieldTag.OFT_RareFlags, 0) : 0;
+                return HasOptionalFields ? (EETypeRareFlags)OptionalFieldsReader.GetInlineField(OptionalFieldsPtr, EETypeOptionalFieldTag.RareFlags, 0) : 0;
             }
         }
 
@@ -1056,7 +1056,7 @@ namespace Internal.Runtime
 
                 // Get the value from the optional fields. The default is zero if that particular field was not included.
                 // The low bits of this field is the ValueType field padding, the rest of the value is the alignment if present
-                UInt32 alignmentValue = (OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.OFT_ValueTypeFieldPadding, 0) & ValueTypePaddingAlignmentMask) >> ValueTypePaddingAlignmentShift;
+                UInt32 alignmentValue = (OptionalFieldsReader.GetInlineField(optionalFields, EETypeOptionalFieldTag.ValueTypeFieldPadding, 0) & ValueTypePaddingAlignmentMask) >> ValueTypePaddingAlignmentShift;
 
                 // Alignment is stored as 1 + the log base 2 of the alignment, except a 0 indicates standard pointer alignment.
                 if (alignmentValue == 0)
