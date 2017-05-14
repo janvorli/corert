@@ -1088,6 +1088,10 @@ extern "C" UInt32_BOOL HeapFree(HANDLE heap, UInt32 flags, void * mem)
 
 #ifndef __APPLE__
 
+#if !HAVE_SIGINFO_T
+#error Cannot hijack threads on this platform
+#endif // !HAVE_SIGINFO_T
+
 #define INJECT_ACTIVATION_SIGNAL SIGRTMIN
 
 static PAL_LIMITED_CONTEXT g_activationContext;
@@ -1156,7 +1160,7 @@ public:
         {
             bytesWritten = write(m_pipeFd[1], &dummy, sizeof(char));
         }
-        while ((bytesWritten == -1) && (errno == EINTR))
+        while ((bytesWritten == -1) && (errno == EINTR));
 
         FATAL_ASSERT(bytesWritten == sizeof(char), "Failed to write to event pipe");
     }
@@ -1170,6 +1174,7 @@ public:
         {
             bytesRead = read(m_pipeFd[0], &dummy, sizeof(char));
         }
+        while ((bytesRead == -1) && (errno == EINTR));
 
         FATAL_ASSERT(bytesRead == sizeof(char), "Failed to read from event pipe");
     }
@@ -1186,6 +1191,7 @@ void ActivationHandler(int code, siginfo_t *siginfo, void *context)
 {
     ucontext_t *ucontext = (ucontext_t *)context;
     NativeContextToPalContext(ucontext, &g_activationContext);
+    __sync_synchronize();
 
     // Signal the requesting thread that the context is ready
     g_activationRequestorEvent.Set();
@@ -1204,13 +1210,9 @@ bool InitializeActivation()
     struct sigaction newAction;
 
     newAction.sa_flags = SA_RESTART;
-#if HAVE_SIGINFO_T
     newAction.sa_handler = NULL;
     newAction.sa_sigaction = ActivationHandler;
     newAction.sa_flags |= SA_SIGINFO;
-#else   /* HAVE_SIGINFO_T */
-    newAction.sa_handler = SIG_DFL;
-#endif  /* HAVE_SIGINFO_T */
     sigemptyset(&newAction.sa_mask);
 
     if (sigaction(INJECT_ACTIVATION_SIGNAL, &newAction, NULL) == -1)
@@ -1258,7 +1260,7 @@ REDHAWK_PALEXPORT UInt32 REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ PalHijack
 
     mach_port_t threadPort = pthread_mach_thread_np(*threadHandle->GetObject());
     kern_return_t machRet;
-    
+
     while (true)
     {
         machRet = thread_suspend(threadPort);
@@ -1296,6 +1298,7 @@ REDHAWK_PALEXPORT UInt32 REDHAWK_PALAPI PalHijack(HANDLE hThread, _In_ PalHijack
     // Wait until the activation handler signals that the g_activationContext is ready
     g_activationRequestorEvent.Wait();
 
+    __sync_synchronize();
     result = callback(hThread, &g_activationContext, pCallbackContext) ? S_OK : E_FAIL;
 
     // Release the thread waiting in the activation handler
