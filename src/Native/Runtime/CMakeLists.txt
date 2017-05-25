@@ -93,13 +93,13 @@ if(WIN32)
 else()
 
   include_directories(unix)
-  include_directories(../libunwind/include)
+#  include_directories(../libunwind/include)
 
   # Disable building _Unwind_XXX style APIs of libunwind, since we don't use them.
-  add_definitions(-D_LIBUNWIND_DISABLE_ZERO_COST_APIS=1)
+#  add_definitions(-D_LIBUNWIND_DISABLE_ZERO_COST_APIS=1)
 
   # Compile unwinding only for the current compilation target architecture
-  add_definitions(-D_LIBUNWIND_IS_NATIVE_ONLY)
+#  add_definitions(-D_LIBUNWIND_IS_NATIVE_ONLY)
 
   list(APPEND COMMON_RUNTIME_SOURCES
     unix/PalRedhawkUnix.cpp
@@ -109,13 +109,13 @@ else()
     unix/HardwareExceptions.cpp
     unix/UnixContext.cpp
     unix/UnixNativeCodeManager.cpp
-    ../libunwind/src/Unwind-EHABI.cpp
-    ../libunwind/src/libunwind.cpp
+ #   ../libunwind/src/Unwind-EHABI.cpp
+ #   ../libunwind/src/libunwind.cpp
   )
 
   if(CLR_CMAKE_PLATFORM_DARWIN)
     list(APPEND FULL_RUNTIME_SOURCES
-      ../libunwind/src/Unwind_AppleExtras.cpp
+ #     ../libunwind/src/Unwind_AppleExtras.cpp
     )
   endif()
 
@@ -131,8 +131,8 @@ else()
   endif()
 
   list(APPEND RUNTIME_SOURCES_ARCH_ASM
-    ../libunwind/src/UnwindRegistersRestore.S
-    ../libunwind/src/UnwindRegistersSave.S
+#    ../libunwind/src/UnwindRegistersRestore.S
+#    ../libunwind/src/UnwindRegistersSave.S
   )
 endif()
 

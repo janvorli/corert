@@ -50,6 +50,8 @@ UInt32 WINAPI FinalizerStart(void* pContext)
 
     g_pFinalizerThread = PTR_Thread(pThread);
 
+    //printf("Finalizer thread started\n");
+
     // Wait for a finalization request.
     UInt32 uResult = PalWaitForSingleObjectEx(hFinalizerEvent, INFINITE, FALSE);
     ASSERT(uResult == WAIT_OBJECT_0);
@@ -81,6 +83,7 @@ bool RhStartFinalizerThread()
     //
     static volatile Int32 fFinalizerThreadCreated;
 
+    //printf("Starting finalizer thread\n");
     if (Interlocked::Exchange(&fFinalizerThreadCreated, 1) != 1)
     {
         if (!PalStartFinalizerThread(FinalizerStart, (void*)g_FinalizerEvent.GetOSEvent()))
@@ -127,6 +130,7 @@ bool RhInitializeFinalization()
 
 void RhEnableFinalization()
 {
+    //printf("RhEnableFinalization\n");
     g_FinalizerEvent.Set();
 }
 
@@ -159,6 +163,7 @@ EXTERN_C REDHAWK_API void __cdecl RhWaitForPendingFinalizers(UInt32_BOOL allowRe
 // (returns false and the finalizer thread should initiate a garbage collection).
 EXTERN_C REDHAWK_API UInt32_BOOL __cdecl RhpWaitForFinalizerRequest()
 {
+    //printf("RhpWaitForFinalizerRequest\n");
     // We can wait for two events; finalization queue has been populated and low memory resource notification.
     // But if the latter is signalled we shouldn't wait on it again immediately -- if the garbage collection
     // the finalizer thread initiates as a result is not sufficient to remove the low memory condition the
@@ -190,6 +195,7 @@ EXTERN_C REDHAWK_API UInt32_BOOL __cdecl RhpWaitForFinalizerRequest()
         {
         case WAIT_OBJECT_0:
             // At least one object is ready for finalization.
+            //printf("  Finalizer event signalled\n");
             return TRUE;
 
         case WAIT_OBJECT_0 + 1:
@@ -215,6 +221,7 @@ EXTERN_C REDHAWK_API UInt32_BOOL __cdecl RhpWaitForFinalizerRequest()
 // Indicate that the current round of finalizations is complete.
 EXTERN_C REDHAWK_API void __cdecl RhpSignalFinalizationComplete()
 {
+    //printf("RhpSignalFinalizationComplete\n");
     g_FinalizerDoneEvent.Set();
 }
 
@@ -226,12 +233,16 @@ EXTERN_C REDHAWK_API void __cdecl RhpSignalFinalizationComplete()
 // Fetch next object which needs finalization or return null if we've reached the end of the list.
 COOP_PINVOKE_HELPER(OBJECTREF, RhpGetNextFinalizableObject, ())
 {
+    //printf("RhpGetNextFinalizableObject\n");
     while (true)
     {
         // Get the next finalizable object. If we get back NULL we've reached the end of the list.
         OBJECTREF refNext = GCHeapUtilities::GetGCHeap()->GetNextFinalizable();
         if (refNext == NULL)
+        {
+            //printf("  Exiting, no more finalizable objects found\n");
             return NULL;
+        }
 
         // The queue may contain objects which have been marked as finalized already (via GC.SuppressFinalize()
         // for instance). Skip finalization for these but reset the flag so that the object can be put back on
@@ -242,6 +253,7 @@ COOP_PINVOKE_HELPER(OBJECTREF, RhpGetNextFinalizableObject, ())
             continue;
         }
 
+        //printf("Returning finalizable object\n");
         // We've found the first finalizable object, return it to the caller.
         return refNext;
     }
